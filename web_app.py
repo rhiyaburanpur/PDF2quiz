@@ -4,6 +4,7 @@ from PyPDF2 import PdfReader
 st.set_page_config(page_title="PDF2Quiz", layout="wide", page_icon="🧠")
 
 
+
 # 1. Initialize session state
 if "page" not in st.session_state:
     st.session_state.page = "home"
