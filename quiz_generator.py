@@ -2,43 +2,72 @@ import re
 import os
 import json
 import time 
-import random # Needed for option shuffling and heuristic question generation
+import random 
 from PyPDF2 import PdfReader
 from typing import List, Dict, Any
-# FIX: Renaming the import alias to avoid collision with system files
-import docx as docx_module 
-from pptx import Presentation
 from io import BytesIO
 
-# --- Configuration Notes ---
-# External LLM dependency has been removed to ensure zero-cost operation.
-# Question generation is now performed using a Rule-Based Heuristic Approach.
+try:
+    from transformers import pipeline
+except ImportError:
+    def pipeline(task, model):
+        print(f"WARNING: Hugging Face 'transformers' library not found. Using stub for {model}.")
+        return lambda x: [{"generated_text": "Could not generate content. Install 'transformers' and 'torch'."}]
 
-# --- Multi-File Extraction Utility Functions (Unchanged) ---
+def get_qa_pipeline():
+    """Loads and caches the Hugging Face QA pipeline."""
+    # Using a model that performs well for question generation
+    # Other options: 't5-small' or 'valhalla/t5-small-qg' (if available)
+    try:
+        return pipeline(
+            "text2text-generation", 
+            model="facebook/bart-large-cnn", 
+            # Load the tokenizer as well
+        )
+    except Exception as e:
+        print(f"Error loading Hugging Face model: {e}")
+        # Return a stub function if model loading fails
+        return None 
+
+#multifile extraction utility functions
 
 def extract_text_from_pdf(uploaded_file, selected_pages):
-    """Extracts text from selected PDF pages."""
+    """Extracts text from selected PDF pages with generic cleaning."""
     if not uploaded_file: return ""
     try:
         uploaded_file.seek(0)
         reader = PdfReader(uploaded_file)
         full_text = []
         page_indices = [p - 1 for p in selected_pages if 0 <= p - 1 < len(reader.pages)]
+        
         for page_index in page_indices:
             page = reader.pages[page_index]
             text = page.extract_text()
             if text: full_text.append(text)
-        return "\n".join(full_text)
+        
+        raw_text = "\n".join(full_text)
+        cleaned_text = re.sub(r'\s+', ' ', raw_text).strip()
+        cleaned_text = re.sub(r'\b[A-Za-z0-9]\b', '', cleaned_text).strip()
+        cleaned_text = re.sub(r'\.{2,}', '.', cleaned_text)
+        cleaned_text = re.sub(r',{2,}', ',', cleaned_text)
+        
+        return cleaned_text.strip()
+        
     except Exception as e:
         print(f"Error during PDF text extraction: {e}")
         return ""
 
 def extract_text_from_docx(uploaded_file):
     """Extracts text from a DOCX file."""
+    try:
+        import docx as docx_module
+    except ImportError:
+        print("ERROR: python-docx library not found.")
+        return ""
+        
     if not uploaded_file: return ""
     try:
         uploaded_file.seek(0)
-        # UPDATED: Use the imported alias docx_module
         document = docx_module.Document(BytesIO(uploaded_file.read()))
         full_text = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
         return "\n".join(full_text)
@@ -48,6 +77,12 @@ def extract_text_from_docx(uploaded_file):
 
 def extract_text_from_pptx(uploaded_file):
     """Extracts text from a PPTX file."""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        print("ERROR: python-pptx library not found.")
+        return ""
+        
     if not uploaded_file: return ""
     try:
         uploaded_file.seek(0)
@@ -63,6 +98,7 @@ def extract_text_from_pptx(uploaded_file):
         print(f"Error during PPTX text extraction: {e}")
         return ""
 
+
 def get_text_content(uploaded_file, selected_pages, file_type):
     """Selects the correct extraction method based on file_type."""
     if file_type == 'pdf':
@@ -74,194 +110,160 @@ def get_text_content(uploaded_file, selected_pages, file_type):
     else:
         return ""
 
-def chunk_text(text, chunk_size=3000, overlap=500):
-    """Splits the input text into manageable chunks for the heuristic generator."""
+def chunk_text(text, chunk_size=3000):
+    """Splits text into chunks of roughly chunk_size based on sentence boundaries."""
     if not text: return []
-    # Basic sentence tokenization using regex split by periods, question marks, and exclamation marks
-    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', text)
     
-    # Simple chunking based on sentence count (simpler for heuristic analysis)
-    # Rejoining sentences up to the desired length
+    # Split by major sentence delimiters
+    sentences = re.split(r'(?<=[.?!])\s+', text)
+    
     current_chunk = ""
     chunks = []
     
     for sentence in sentences:
-        if len(current_chunk) + len(sentence) > chunk_size and current_chunk:
+        if len(current_chunk) + len(sentence) + 1 > chunk_size and current_chunk:
             chunks.append(current_chunk.strip())
-            current_chunk = sentence
+            current_chunk = sentence + "." 
         else:
-            current_chunk += " " + sentence
+            current_chunk += (" " if current_chunk else "") + sentence
             
     if current_chunk:
         chunks.append(current_chunk.strip())
         
     return chunks
 
-# --- Heuristic Question Generation (Replacement for LLM API) ---
+def generate_questions_with_hf(text_chunk: str, num_questions: int) -> List[Dict[str, Any]]:
+    """
+    Uses the Hugging Face model to generate structured MCQ questions from a text chunk.
+    This function is designed to run multiple times across different chunks.
+    """
+    qa_pipeline = get_qa_pipeline()
+    if not qa_pipeline:
+        return []
 
-def generate_questions_heuristically(text_chunk: str, num_questions_per_chunk: int) -> List[Dict[str, Any]]:
-    """
-    Generates fill-in-the-blank questions based on simple keyword extraction.
-    
-    This function replaces the previous LLM API call.
-    """
-    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', text_chunk)
     quiz_data = []
     
-    # 1. Gather all potential keywords for distractors
-    # Heuristic: Use capitalized words (likely proper nouns or acronyms) and numbers
-    all_keywords = set()
-    for sentence in sentences:
-        # Find capitalized words (excluding start of sentence if not a noun)
-        capitalized_words = re.findall(r'\b[A-Z][a-z]+\b', sentence)
-        # Find numbers
-        numbers = re.findall(r'\b\d{2,}\b', sentence)
+    #prompt for the model
+    system_prompt = (
+        "You are an expert quiz generator. Analyze the text provided below and generate a list of "
+        f"{num_questions} unique multiple-choice questions (MCQs). "
+        "Each question MUST have one correct answer and exactly three plausible distractors. "
+        "Output the result as a single JSON array object, where each element is an object with "
+        "keys: 'question', 'correct_answer', and 'distractors' (an array of 3 strings). "
+        "Ensure the 'question' includes context from the source text."
+    )
+    
+    user_prompt = f"Source Text: \"{text_chunk[:2500]}...\""
+    
+    full_prompt = system_prompt + "\n\n" + user_prompt
+    
+    try:
+        generated_response = qa_pipeline(
+            full_prompt, 
+            max_length=1500,
+            do_sample=True,
+            top_k=50,
+            temperature=0.7,
+            num_return_sequences=1
+        )
         
-        # Add to the pool, removing duplicates
-        all_keywords.update(capitalized_words)
-        all_keywords.update(numbers)
+        raw_text = generated_response[0]['generated_text']
         
-    keyword_list = list(all_keywords)
-
-    # 2. Iterate and generate questions
-    for sentence in sentences:
-        if len(quiz_data) >= num_questions_per_chunk:
-            break
+        # Try to clean the output to isolate the pure JSON array
+        # This handles cases where the model wraps the JSON in markdown or plain text
+        json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
             
-        # Try to find a good answer candidate in the sentence
-        candidate_matches = re.findall(r'\b([A-Z][a-z]+|\d{2,})\b', sentence)
-        
-        if not candidate_matches:
-            continue
+            #basic JSON cleanup 
+            json_str = json_str.replace('\n', ' ').replace('\\n', ' ').strip()
             
-        # Pick a random candidate word from the sentence as the correct answer
-        correct_answer = random.choice(candidate_matches)
-        
-        # Remove the correct answer from the sentence and replace with a blank
-        # Use regex to replace only the first occurrence for clarity
-        question_text = re.sub(r'\b' + re.escape(correct_answer) + r'\b', '_______', sentence, 1)
-        
-        # Ensure the question is meaningful and not just a fragment
-        if '_______' not in question_text:
-            continue
+            quiz_list = json.loads(json_str)
             
-        # 3. Generate 3 Distractors
-        # Distractors are picked from the general keyword list, excluding the correct answer
-        distractor_pool = [k for k in keyword_list if k != correct_answer]
+            for item in quiz_list:
+                options = [item['correct_answer']] + item['distractors']
+                
+                quiz_data.append({
+                    "question": item['question'],
+                    "options": options,
+                    "correct_answer": item['correct_answer'],
+                    "source_snippet": text_chunk[:500] + "..." 
+                })
         
-        # Ensure there are enough unique distractors
-        num_distractors = 3
-        if len(distractor_pool) < num_distractors:
-            # Fallback: repeat words or use simple placeholders if necessary
-            distractors = random.choices(distractor_pool, k=num_distractors)
-            if not distractors:
-                distractors = ["Option 1", "Option 2", "Option 3"] # Absolute fallback
-        else:
-            distractors = random.sample(distractor_pool, num_distractors)
+    except json.JSONDecodeError as e:
+        print(f"JSON Decoding Error (Model did not output valid JSON): {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred during generation: {e}")
         
-        # 4. Assemble the question item
-        options = [correct_answer] + distractors
-        
-        # Shuffle is handled later in post_process_quiz_data, but we ensure structure here
-        quiz_data.append({
-            "question": question_text.strip(),
-            "options": options,
-            "correct_answer": correct_answer,
-            "source_snippet": sentence.strip()
-        })
-
     return quiz_data
 
-# --- Post-processing and Deduplication (Now uses 'random' module) ---
+
+#post-processing and deduplication
 
 def post_process_quiz_data(quiz_data: List[Dict[str, Any]], target_count: int) -> List[Dict[str, Any]]:
     """
     Performs deduplication, cleaning, and shuffling of options.
-    Uses the 'random' module.
     """
     
-    # Set to store canonical, simplified question text to detect duplicates
     seen_questions = set()
     final_questions = []
 
     for item in quiz_data:
         question_text = item.get('question', '').strip()
         
-        # 1. Cleaning: Basic normalization (lowercase, remove punctuation, strip whitespace)
         normalized_q = re.sub(r'[^\w\s]', '', question_text).lower()
         
-        # 2. Deduplication Check
         if normalized_q in seen_questions:
             continue
         
         seen_questions.add(normalized_q)
         
-        # 3. Shuffle Options (Crucial for good MCQ design)
         options = item.get('options', [])
-        correct_answer = item.get('correct_answer')
         
-        if options:
-            # We already imported random globally
-            if isinstance(correct_answer, str):
+        if options and isinstance(item.get('correct_answer'), str):
+            random.shuffle(options)
+            item['options'] = options
                 
-                # Perform the shuffle
-                random.shuffle(options)
-                
-                # Update the item with shuffled options
-                item['options'] = options
-                
-        # 4. Final collection
+        # final collection
         final_questions.append(item)
         
-        # Stop if we hit the user-requested count after deduplication
         if len(final_questions) >= target_count:
             break
             
     return final_questions
 
-# --- Main Orchestration Function ---
+#main orchestration function
 
 def run_question_generation(uploaded_file, selected_pages, difficulty, num_questions, q_type, mcq_type, file_type):
     """
-    Main orchestration function: extracts text, chunks it, and calls the heuristic generator.
-    
-    Note: 'difficulty', 'q_type', and 'mcq_type' are now ignored by the free heuristic generator
-    but kept in the signature for compatibility with the frontend structure.
+    Main orchestration function: uses Hugging Face model for generation.
     """
-    # 1. Extraction
+    #extraction and generic cleaning
     text_content = get_text_content(uploaded_file, selected_pages, file_type)
     
     if not text_content:
         return []
 
-    # 2. Chunking
-    # Chunking uses sentence-based logic for better heuristic question quality
+    #chunking
     chunks = chunk_text(text_content, chunk_size=3000)
     
-    total_chunks = len(chunks)
-    # Request slightly more questions initially to compensate for potential deduplication
-    total_questions_to_request = int(num_questions * 2) # Request 100% more, as heuristics are less reliable
-    
-    questions_per_chunk = total_questions_to_request // total_chunks
-    remaining_questions = total_questions_to_request % total_chunks
-    
     all_quiz_data = []
-
-    # 3. Generation (Loop through chunks)
-    for i, chunk in enumerate(chunks):
-        target_q_count = questions_per_chunk + (1 if i < remaining_questions else 0)
+    
+    # we generate a total pool of questions slightly larger than requested (e.g., 1.5x) to account for potential duplicates or invalid JSON outputs.
+    
+    # distributing the generation request across all chunks
+    target_generation_per_chunk = (num_questions * 2 + len(chunks) - 1) // len(chunks) if chunks else num_questions
+    
+    for chunk in chunks:
+        # calling the HF model generation function
+        quiz_data_chunk = generate_questions_with_hf(chunk, target_generation_per_chunk)
+        all_quiz_data.extend(quiz_data_chunk)
         
-        if target_q_count > 0:
-            # Call the free heuristic generator
-            quiz_data_chunk = generate_questions_heuristically(
-                chunk, 
-                target_q_count
-            )
-            all_quiz_data.extend(quiz_data_chunk)
-            
-            # Note: We continue iterating to maximize the pool for effective deduplication.
-            
-    # 4. Post-processing/Deduplication
+    #post-processing/deduplication
     final_data = post_process_quiz_data(all_quiz_data, num_questions)
     
+    if not final_data:
+        # Fallback if LLM failed to generate or parse
+        return [{"question": "AI generation failed. Please check console for errors or install required packages.", "options": ["A", "B", "C", "D"], "correct_answer": "A", "source_snippet": "AI Model Error"}]
+        
     return final_data

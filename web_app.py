@@ -1,8 +1,8 @@
 import streamlit as st
 from PyPDF2 import PdfReader # Keep for PDF page preview functionality
 import quiz_generator 
-import time # Needed for timer functionality
-import io # Needed for handling uploaded file as a stream
+import time 
+import io 
 
 st.set_page_config(page_title="PDF2Quiz", layout="wide", page_icon="🧠")
 
@@ -46,7 +46,7 @@ if "timer_running" not in st.session_state:
 def get_pdf_page_count(uploaded_file):
     """Reads the uploaded PDF file to determine the total number of pages."""
     try:
-        # Use io.BytesIO to read the uploaded file content in memory
+        # Using io.BytesIO to read the uploaded file content in memory
         pdf_reader = PdfReader(io.BytesIO(uploaded_file.getvalue()))
         return len(pdf_reader.pages)
     except Exception as e:
@@ -121,11 +121,11 @@ def generate_quiz():
 
 
     with st.spinner(f"Analyzing {file_name} and generating questions..."):
-        # CALL THE BACKEND FUNCTION
+       
         quiz_data = quiz_generator.run_question_generation(
             uploaded_file=st.session_state.uploaded_file,
             selected_pages=st.session_state.selected_pages,
-            # Configuration parameters 
+            # Config. parameters 
             difficulty=st.session_state.difficulty, 
             q_type=st.session_state.question_type, 
             mcq_type=st.session_state.mcq_type, 
@@ -135,8 +135,8 @@ def generate_quiz():
 
     if quiz_data:
         st.session_state.quiz_data = quiz_data
-        st.session_state.page = "quiz" # Move to the quiz display page
-        # Start timer if needed for Practice Mode
+        st.session_state.page = "quiz" 
+        # Timer for Practice Mode
         if st.session_state.mode == "Practice" and st.session_state.timer_option != "No Timer":
             st.session_state.time_start = time.time()
             st.session_state.timer_running = True
@@ -428,7 +428,7 @@ if st.session_state.page == "home":
     with col2:
         st.title("Document-to-Quiz Generator")
         st.markdown("Upload your document (PDF, DOCX, PPTX) and instantly generate customized quizzes for learning or practice.")
-        st.info("Since we are using a heuristic method, questions will be fill-in-the-blank style based on key terms and numbers in your document.")
+        st.info("This generator uses a local Hugging Face AI Model to analyze your document's text and create high-quality, contextual Multiple-Choice Questions.")
 
 
 # --- Page Routing ---
