@@ -388,6 +388,20 @@ if st.session_state.page == "home":
     with col1:
         st.subheader("Quiz Configuration")
 
+        # Configuration settings
+        st.session_state.mode = st.selectbox("Select Mode", ["Learning", "Practice"], key="mode_q")
+        st.session_state.num_questions = st.number_input("Number of Questions", min_value=1, max_value=50, value=10, key="num_q")
+        st.session_state.difficulty = st.selectbox("Difficulty Level", ["Easy", "Medium", "Hard"], key="difficulty_q")
+        st.session_state.question_type = st.selectbox("Question Type", ["Multiple Choice"], key="type_q")
+        st.session_state.mcq_type = st.selectbox("MCQ Type", ["Single Answer"], key="mcq_type_q")
+        st.session_state.timer_option = st.selectbox("Timer Option (Practice Mode)", ["No Timer", "5 Minutes", "10 Minutes"], key="timer_option_q")
+
+
+        # ATTACHING THE CALL TO THE BUTTON
+        st.button("🧠 Generate Quiz", on_click=generate_quiz, type="primary")
+
+    with col2:
+        st.title("Document-to-Quiz Generator")
         # File Uploader
         st.session_state.uploaded_file = st.file_uploader(
             "Upload Document (PDF, DOCX, PPTX)", 
@@ -411,22 +425,6 @@ if st.session_state.page == "home":
             else:
                 st.warning("Could not read page count from PDF.")
         # --- END PDF PAGE SELECTION LOGIC ---
-
-
-        # Configuration settings
-        st.session_state.mode = st.selectbox("Select Mode", ["Learning", "Practice"], key="mode_q")
-        st.session_state.num_questions = st.number_input("Number of Questions", min_value=1, max_value=50, value=10, key="num_q")
-        st.session_state.difficulty = st.selectbox("Difficulty Level", ["Easy", "Medium", "Hard"], key="difficulty_q")
-        st.session_state.question_type = st.selectbox("Question Type", ["Multiple Choice"], key="type_q")
-        st.session_state.mcq_type = st.selectbox("MCQ Type", ["Single Answer"], key="mcq_type_q")
-        st.session_state.timer_option = st.selectbox("Timer Option (Practice Mode)", ["No Timer", "5 Minutes", "10 Minutes"], key="timer_option_q")
-
-
-        # ATTACHING THE CALL TO THE BUTTON
-        st.button("🧠 Generate Quiz", on_click=generate_quiz, type="primary")
-
-    with col2:
-        st.title("Document-to-Quiz Generator")
         st.markdown("Upload your document (PDF, DOCX, PPTX) and instantly generate customized quizzes for learning or practice.")
         st.info("This generator uses a local Hugging Face AI Model to analyze your document's text and create high-quality, contextual Multiple-Choice Questions.")
 
