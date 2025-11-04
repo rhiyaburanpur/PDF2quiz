@@ -154,11 +154,11 @@ def handle_answer_selection(q_idx, selected_option):
     if st.session_state.mode == "Learning":
         # Learning Mode: Immediate feedback
         if is_correct:
-            st.session_state.feedback = "✅ Correct! Well done."
+            st.session_state.feedback = " Correct! Well done."
             st.session_state.score += 1 # Update score immediately
             st.balloons()
         else:
-            st.session_state.feedback = f"❌ Incorrect. The correct answer is **{q_data['correct_answer']}**."
+            st.session_state.feedback = f" Incorrect. The correct answer is **{q_data['correct_answer']}**."
         
         # Show explanation/source snippet
         st.session_state.feedback += f"\n\n**Source Context:** {q_data['source_snippet']}"
@@ -305,7 +305,7 @@ def results_page():
     final_score = st.session_state.score
     percentage = (final_score / total_q) * 100 if total_q > 0 else 0
     
-    st.title("🎉 Quiz Results")
+    st.title(" Quiz Results")
     
     col_score, col_review = st.columns([1, 3])
     
@@ -398,7 +398,7 @@ if st.session_state.page == "home":
 
 
         # ATTACHING THE CALL TO THE BUTTON
-        st.button("🧠 Generate Quiz", on_click=generate_quiz, type="primary")
+        st.button(" Generate Quiz", on_click=generate_quiz, type="primary")
 
     with col2:
         st.title("Document-to-Quiz Generator")
